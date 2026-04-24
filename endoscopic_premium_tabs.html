@@ -675,7 +675,7 @@
       align-items: stretch;
     }
 
-    #bodyMap, #depthGauge, #sparkline, #gaugeCanvas, #ecgCanvas,
+    #bodyMap, #depthGauge, #sparkline,
     #previewOriginal, #previewProcessed {
       width: 100%;
       display: block;
@@ -687,8 +687,6 @@
     #bodyMap { height: 220px; }
     #depthGauge { height: 220px; }
     #sparkline { height: 64px; }
-    #gaugeCanvas { height: 160px; }
-    #ecgCanvas { height: 90px; }
     #previewOriginal, #previewProcessed { height: 170px; }
 
     .speed-row {
@@ -1318,7 +1316,7 @@
           <div class="panel-header">
             <div>
               <h2>Control Panel</h2>
-              <div class="subtle">CO₂, channels, subsystem toggles, patient vitals</div>
+              <div class="subtle">Channels, subsystem toggles, patient vitals</div>
             </div>
           </div>
 
@@ -1328,18 +1326,12 @@
             <div class="toggle-row"><span>Processing</span><label class="switch"><input type="checkbox" id="toggleProcessing" checked /><span class="slider"></span></label></div>
           </div>
 
-          <div class="range-wrap" style="margin-top:12px;">
-            <div class="range-title"><span>CO₂ Insufflation Pressure</span><span class="value-badge" id="co2Readout">6.0 mmHg</span></div>
-            <input type="range" id="co2Slider" min="0" max="15" value="6" step="0.1" />
-          </div>
-          <canvas id="gaugeCanvas" width="280" height="160"></canvas>
-
-          <div class="button-row">
+          <div class="button-row" style="margin-top:12px;">
             <button id="waterBtn" class="btn btn-ghost">Water Channel</button>
             <button id="airBtn" class="btn">Air Channel</button>
           </div>
 
-          <div class="tiny-grid">
+          <div class="tiny-grid" style="margin-top:12px;">
             <div class="readout-box">
               <div class="k">Heart Rate</div>
               <div class="v" id="hrReadout">78 bpm</div>
@@ -1349,7 +1341,6 @@
               <div class="v" id="spo2Readout">98%</div>
             </div>
           </div>
-          <canvas id="ecgCanvas" width="280" height="90"></canvas>
         </div>
       </div>
 
@@ -1602,6 +1593,8 @@
       navigation: {
         depth: 18,
         rotation: 0,
+        orientation: 0,
+        orientationLocked: false,
         steer: 0,
         speed: 'normal',
         trail: [],
@@ -1610,7 +1603,7 @@
         lastActionTime: 0,
       },
       control: {
-        co2: 6,
+        
         channel: 'air',
         timerStart: Date.now(),
         pausedElapsed: 0,
@@ -1759,7 +1752,7 @@
     function runClientSelfTest() {
       const requiredIds = [
         'viewportCanvas', 'measureCanvas', 'captureBtn', 'intensitySlider', 'illuminationToggle',
-        'tissueGroup', 'zoomGroup', 'focusSlider', 'co2Slider', 'btnUp', 'btnDown', 'btnLeft', 'btnRight',
+        'tissueGroup', 'zoomGroup', 'focusSlider', 'btnUp', 'btnDown', 'btnLeft', 'btnRight',
         'previewOriginal', 'previewProcessed', 'noiseToggle', 'contrastToggle', 'edgeToggle', 'hsvToggle',
         'textureToggle', 'galleryStrip', 'logBox', 'operatorName', 'procedureType', 'patientId'
       ];
@@ -1811,7 +1804,6 @@
               depth_cm: state.navigation.depth,
               rotation_deg: state.navigation.rotation,
               brightness_percent: state.illumination.intensity,
-              co2_mmhg: state.control.co2,
               procedure: qs('procedureType').value,
               patient_id: qs('patientId').value
             }
@@ -1829,6 +1821,39 @@
         checkBackendHealth();
         return false;
       }
+    }
+
+
+    // ===== [LIVE CONTROL] frontend helpers to call Python backend live-control endpoints
+    async function startLive() {
+      try {
+        const res = await fetch('/api/live/start', { method: 'POST' });
+        return res.ok ? await res.json() : null;
+      } catch (e) { return null; }
+    }
+
+    async function stopLive() {
+      try {
+        const res = await fetch('/api/live/stop', { method: 'POST' });
+        return res.ok ? await res.json() : null;
+      } catch (e) { return null; }
+    }
+
+    async function getLiveStatus() {
+      try {
+        const res = await fetch('/api/live/status', { cache: 'no-store' });
+        return res.ok ? await res.json() : null;
+      } catch (e) { return null; }
+    }
+
+    async function setLiveControl(payload = {}) {
+      try {
+        const res = await fetch('/api/live/control', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        return res.ok ? await res.json() : null;
+      } catch (e) { return null; }
     }
 
 
@@ -1852,8 +1877,7 @@
     const sparkCtx = qs('sparkline').getContext('2d');
     const bodyCtx = qs('bodyMap').getContext('2d');
     const depthCtx = qs('depthGauge').getContext('2d');
-    const gaugeCtx = qs('gaugeCanvas').getContext('2d');
-    const ecgCtx = qs('ecgCanvas').getContext('2d');
+    
     const particles = qs('particles');
     const particleCtx = particles.getContext('2d');
     const annotationCanvas = qs('annotationCanvas');
@@ -1881,7 +1905,7 @@
     let lastFrameTime = performance.now();
     let frameAccumulator = 0;
     let lastVitalsUpdate = performance.now();
-    let ecgPhase = 0;
+    
 
     function logAction(text) {
       const ts = new Date().toLocaleTimeString();
@@ -1912,11 +1936,32 @@
       qs('statTimer').textContent = formatTime(procedureElapsed());
       qs('depthReadout').textContent = `${state.navigation.depth.toFixed(1)} cm`;
       qs('angleReadout').textContent = `${Math.round(state.navigation.rotation)}°`;
+      // show orientation (user override) if present
+      let orEl = qs('orientationReadout');
+      if (!orEl) {
+        const base = qs('angleReadout');
+        if (base && base.parentElement) {
+          orEl = document.createElement('div');
+          orEl.id = 'orientationReadout';
+          orEl.style.fontSize = '0.7rem';
+          orEl.style.color = '#9ab5c8';
+          orEl.style.marginTop = '4px';
+          base.parentElement.appendChild(orEl);
+        }
+      }
+      if (orEl) orEl.textContent = `Orientation: ${Math.round(state.navigation.orientation)}°`;
+      const orientSlider = qs('orientationSlider');
+      if (orientSlider) orientSlider.value = String(Math.round(state.navigation.orientation));
+      const lockBtn = qs('orientationLockBtn');
+      if (lockBtn) {
+        lockBtn.classList.toggle('btn-danger', !!state.navigation.orientationLocked);
+        lockBtn.classList.toggle('btn-ghost', !state.navigation.orientationLocked);
+        lockBtn.textContent = state.navigation.orientationLocked ? 'Locked' : 'Lock';
+      }
       qs('imagingBrightness').textContent = `${state.illumination.intensity}%`;
       qs('frameReadout').textContent = `FRAME ${String(state.imaging.frame).padStart(6, '0')}`;
       qs('hrReadout').textContent = `${state.vitals.hr.toFixed(0)} bpm`;
       qs('spo2Readout').textContent = `${state.vitals.spo2.toFixed(0)}%`;
-      qs('co2Readout').textContent = `${state.control.co2.toFixed(1)} mmHg`;
       qs('colorNormReadout').textContent = `${state.processing.colorNorm}%`;
       qs('galleryCount').textContent = `${state.captures.length} Frame${state.captures.length === 1 ? '' : 's'}`;
       if (typeof syncGlobalLiveMonitor === 'function') syncGlobalLiveMonitor();
@@ -2437,7 +2482,16 @@
       }
       pctx.putImageData(img, 0, 0);
       vctx.clearRect(0, 0, viewportCanvas.width, viewportCanvas.height);
-      vctx.drawImage((state.subsystems.processing ? procCanvas : simCanvas), 0, 0);
+      // Draw source rotated by user-controlled camera orientation (real endoscopy behaviour)
+      const src = state.subsystems.processing ? procCanvas : simCanvas;
+      const cx = viewportCanvas.width / 2;
+      const cy = viewportCanvas.height / 2;
+      vctx.save();
+      vctx.translate(cx, cy);
+      const ang = ((state.navigation.orientation || 0) * Math.PI) / 180;
+      vctx.rotate(ang);
+      vctx.drawImage(src, -cx, -cy, src.width || viewportCanvas.width, src.height || viewportCanvas.height);
+      vctx.restore();
       drawPreviewCanvases();
     }
 
@@ -2555,8 +2609,16 @@
       if (action === 'backward') state.navigation.depth = Math.max(0, state.navigation.depth - step);
       if (action === 'left') state.navigation.steer = Math.max(-1, state.navigation.steer - 0.08 * boost);
       if (action === 'right') state.navigation.steer = Math.min(1, state.navigation.steer + 0.08 * boost);
-      if (action === 'rotateCW') state.navigation.rotation = (state.navigation.rotation + 6 * boost) % 360;
-      if (action === 'rotateCCW') state.navigation.rotation = (state.navigation.rotation - 6 * boost + 360) % 360;
+      if (action === 'rotateCW') {
+        const delta = 6 * boost;
+        state.navigation.rotation = (state.navigation.rotation + delta) % 360;
+        if (!state.navigation.orientationLocked) state.navigation.orientation = (state.navigation.orientation + delta) % 360;
+      }
+      if (action === 'rotateCCW') {
+        const delta = 6 * boost;
+        state.navigation.rotation = (state.navigation.rotation - delta + 360) % 360;
+        if (!state.navigation.orientationLocked) state.navigation.orientation = (state.navigation.orientation - delta + 360) % 360;
+      }
       if (action === 'center') state.navigation.steer *= 0.25;
       state.navigation.lastAction = action;
       state.navigation.lastActionTime = Date.now();
@@ -2799,59 +2861,8 @@
 
     // ===== [6] CONTROL PANEL =====
     function drawGauge() {
-      const c = qs('gaugeCanvas');
-      gaugeCtx.clearRect(0, 0, c.width, c.height);
-      gaugeCtx.fillStyle = 'rgba(255,255,255,0.03)';
-      gaugeCtx.fillRect(0, 0, c.width, c.height);
-      const cx = c.width / 2;
-      const cy = c.height - 18;
-      const radius = 88;
-      gaugeCtx.lineWidth = 14;
-      gaugeCtx.strokeStyle = 'rgba(255,255,255,0.08)';
-      gaugeCtx.beginPath();
-      gaugeCtx.arc(cx, cy, radius, Math.PI, 0);
-      gaugeCtx.stroke();
-      const pressureRatio = state.control.co2 / 15;
-      const grad = gaugeCtx.createLinearGradient(cx - radius, cy, cx + radius, cy);
-      grad.addColorStop(0, '#00b894');
-      grad.addColorStop(0.5, '#00e5ff');
-      grad.addColorStop(1, '#fdcb6e');
-      gaugeCtx.strokeStyle = grad;
-      gaugeCtx.beginPath();
-      gaugeCtx.arc(cx, cy, radius, Math.PI, Math.PI + Math.PI * pressureRatio);
-      gaugeCtx.stroke();
-
-      for (let i = 0; i <= 15; i += 3) {
-        const a = Math.PI + (i / 15) * Math.PI;
-        const x1 = cx + Math.cos(a) * (radius - 16);
-        const y1 = cy + Math.sin(a) * (radius - 16);
-        const x2 = cx + Math.cos(a) * (radius + 6);
-        const y2 = cy + Math.sin(a) * (radius + 6);
-        gaugeCtx.strokeStyle = 'rgba(255,255,255,0.18)';
-        gaugeCtx.lineWidth = 2;
-        gaugeCtx.beginPath();
-        gaugeCtx.moveTo(x1, y1);
-        gaugeCtx.lineTo(x2, y2);
-        gaugeCtx.stroke();
-        gaugeCtx.fillStyle = '#cfe7f5';
-        gaugeCtx.font = '11px Roboto Mono';
-        gaugeCtx.fillText(String(i), cx + Math.cos(a) * (radius + 20) - 7, cy + Math.sin(a) * (radius + 20) + 4);
-      }
-
-      const needleA = Math.PI + pressureRatio * Math.PI;
-      gaugeCtx.strokeStyle = '#ffffff';
-      gaugeCtx.lineWidth = 3;
-      gaugeCtx.beginPath();
-      gaugeCtx.moveTo(cx, cy);
-      gaugeCtx.lineTo(cx + Math.cos(needleA) * (radius - 10), cy + Math.sin(needleA) * (radius - 10));
-      gaugeCtx.stroke();
-      gaugeCtx.fillStyle = '#ffffff';
-      gaugeCtx.beginPath();
-      gaugeCtx.arc(cx, cy, 6, 0, Math.PI * 2);
-      gaugeCtx.fill();
-      gaugeCtx.fillStyle = '#e8f7ff';
-      gaugeCtx.font = 'bold 22px Roboto Mono';
-      gaugeCtx.fillText(`${state.control.co2.toFixed(1)} mmHg`, cx - 68, 62);
+      // CO2 gauge removed — placeholder no-op to preserve call sites
+      return;
     }
 
     function updateVitals(now) {
@@ -2866,38 +2877,8 @@
     }
 
     function drawECG(now) {
-      const c = qs('ecgCanvas');
-      ecgCtx.clearRect(0, 0, c.width, c.height);
-      ecgCtx.fillStyle = 'rgba(255,255,255,0.03)';
-      ecgCtx.fillRect(0, 0, c.width, c.height);
-      ecgCtx.strokeStyle = 'rgba(255,255,255,0.06)';
-      for (let i = 0; i < 6; i++) {
-        ecgCtx.beginPath();
-        ecgCtx.moveTo(0, i * 18);
-        ecgCtx.lineTo(c.width, i * 18);
-        ecgCtx.stroke();
-      }
-      ecgCtx.beginPath();
-      ecgCtx.lineWidth = 2.4;
-      ecgCtx.strokeStyle = '#38ef7d';
-      const baseline = c.height / 2;
-      const beatPeriod = 60 / state.vitals.hr;
-      ecgPhase += 0.021;
-      for (let x = 0; x < c.width; x++) {
-        const t = (x / c.width) * 3.6 + ecgPhase;
-        const phase = (t % beatPeriod) / beatPeriod;
-        let y = baseline;
-        y += Math.sin(t * 8) * 1.3;
-        if (phase > 0.16 && phase < 0.2) y -= (phase - 0.16) * 140;
-        else if (phase >= 0.2 && phase < 0.235) y += (phase - 0.2) * 320 - 8;
-        else if (phase >= 0.235 && phase < 0.28) y -= (0.28 - phase) * 90;
-        if (phase > 0.48 && phase < 0.56) y -= Math.sin((phase - 0.48) / 0.08 * Math.PI) * 8;
-        if (x === 0) ecgCtx.moveTo(x, y); else ecgCtx.lineTo(x, y);
-      }
-      ecgCtx.stroke();
-      ecgCtx.fillStyle = '#cfe7f5';
-      ecgCtx.font = '12px Roboto Mono';
-      ecgCtx.fillText(`ECG  HR:${state.vitals.hr.toFixed(0)}  SpO2:${state.vitals.spo2.toFixed(0)}%`, 10, 16);
+      // ECG display removed — no-op placeholder
+      return;
     }
 
     function setEmergency(active) {
@@ -2963,7 +2944,7 @@
           <div class="card"><strong>Elapsed Time</strong><div class="mono">${formatTime(procedureElapsed())}</div></div>
           <div class="card"><strong>Depth / Rotation</strong><div class="mono">${state.navigation.depth.toFixed(1)} cm / ${Math.round(state.navigation.rotation)}°</div></div>
           <div class="card"><strong>Illumination</strong><div class="mono">${state.illumination.on ? 'ON' : 'OFF'} · ${state.illumination.mode.toUpperCase()} · ${state.illumination.intensity}%</div></div>
-          <div class="card"><strong>CO₂ Pressure</strong><div class="mono">${state.control.co2.toFixed(1)} mmHg</div></div>
+          
           <div class="card"><strong>Vitals</strong><div class="mono">HR ${state.vitals.hr.toFixed(0)} bpm · SpO₂ ${state.vitals.spo2.toFixed(0)}%</div></div>
         </div>
         <h2>Clinical Context</h2>
@@ -3084,12 +3065,14 @@
         state.illumination.on = e.target.checked;
         updateIlluminationUI();
         updateSubsystemStatus();
+        setLiveControl({ illumination_on: state.illumination.on });
         logAction(`Illumination turned ${state.illumination.on ? 'ON' : 'OFF'}`);
       });
       qs('intensitySlider').addEventListener('input', (e) => {
         state.illumination.intensity = Number(e.target.value);
         pushSparkline(state.illumination.intensity);
         updateIlluminationUI();
+        setLiveControl({ illumination_intensity: state.illumination.intensity });
       });
       document.querySelectorAll('#colorModeGroup .seg').forEach(btn => btn.addEventListener('click', () => {
         state.illumination.mode = btn.dataset.mode;
@@ -3110,6 +3093,7 @@
         state.imaging.zoom = Number(btn.dataset.zoom);
         selectSegment('zoomGroup', btn.dataset.zoom, 'zoom');
         updateImagingUI();
+        setLiveControl({ zoom: state.imaging.zoom });
         logAction(`Zoom changed to ${state.imaging.zoom}x`);
       }));
       qs('focusSlider').addEventListener('input', e => {
@@ -3125,6 +3109,33 @@
       });
       qs('clearMeasureBtn').addEventListener('click', clearMeasurement);
       measureCanvas.addEventListener('click', measurementClick);
+
+      // Orientation controls (slider + lock) inserted next to angleReadout
+      (function setupOrientationControls() {
+        const base = qs('angleReadout');
+        if (!base || !base.parentElement) return;
+        if (qs('orientationSlider')) return; // already set
+        const wrap = document.createElement('div');
+        wrap.style.display = 'flex';
+        wrap.style.alignItems = 'center';
+        wrap.style.gap = '8px';
+        wrap.style.marginTop = '6px';
+        wrap.innerHTML = `<input id="orientationSlider" type="range" min="0" max="359" value="${Math.round(state.navigation.orientation)}" style="width:120px"><button id="orientationLockBtn" class="btn small btn-ghost">Lock</button>`;
+        base.parentElement.appendChild(wrap);
+        qs('orientationSlider').addEventListener('input', (e) => {
+          state.navigation.orientation = Number(e.target.value);
+          setLiveControl({ orientation_deg: state.navigation.orientation });
+          updateTopStats();
+        });
+        qs('orientationLockBtn').addEventListener('click', (e) => {
+          state.navigation.orientationLocked = !state.navigation.orientationLocked;
+          const btn = e.currentTarget;
+          btn.classList.toggle('btn-danger', state.navigation.orientationLocked);
+          btn.classList.toggle('btn-ghost', !state.navigation.orientationLocked);
+          btn.textContent = state.navigation.orientationLocked ? 'Locked' : 'Lock';
+          logAction(`Orientation ${state.navigation.orientationLocked ? 'locked' : 'unlocked'} by user`);
+        });
+      })();
 
       // Simulated image input
       const simUpload = qs('simImageUpload');
@@ -3161,7 +3172,7 @@
       qs('toggleNavigation').addEventListener('change', e => { state.subsystems.navigation = e.target.checked; updateSubsystemStatus(); logAction(`Navigation subsystem ${e.target.checked ? 'enabled' : 'disabled'}`); });
       qs('toggleProcessing').addEventListener('change', e => { state.subsystems.processing = e.target.checked; updateSubsystemStatus(); logAction(`Processing subsystem ${e.target.checked ? 'enabled' : 'disabled'}`); });
 
-      qs('co2Slider').addEventListener('input', e => { state.control.co2 = Number(e.target.value); drawGauge(); updateTopStats(); });
+      // CO2 control removed -- no-op
       qs('waterBtn').addEventListener('click', () => { state.control.channel = 'water'; triggerCleaningEffect('water'); logAction('Water channel activated for lens clearing'); });
       qs('airBtn').addEventListener('click', () => { state.control.channel = 'air'; triggerCleaningEffect('air'); logAction('Air channel activated for lens clearing'); });
       qs('emergencyBtn').addEventListener('click', () => setEmergency(true));
@@ -3202,6 +3213,17 @@
         else if (['arrowright', 'd'].includes(key)) { e.preventDefault(); navInput('right', boost); }
         else if (key === 'q') { e.preventDefault(); navInput('rotateCCW', boost); }
         else if (key === 'e') { e.preventDefault(); navInput('rotateCW', boost); }
+        else if (key === '[') {
+          // decrease user orientation by 5 degrees
+          state.navigation.orientation = (state.navigation.orientation - 5 + 360) % 360;
+          setLiveControl({ orientation_deg: state.navigation.orientation });
+          updateTopStats();
+        } else if (key === ']') {
+          // increase user orientation by 5 degrees
+          state.navigation.orientation = (state.navigation.orientation + 5) % 360;
+          setLiveControl({ orientation_deg: state.navigation.orientation });
+          updateTopStats();
+        }
       });
     }
 
@@ -3356,6 +3378,15 @@
 
     function init() {
       initPremiumTabs();
+      // Sync orientation from local backend if available
+      getLiveStatus().then(s => {
+        try {
+          if (s && s.state && typeof s.state.orientation_deg === 'number') {
+            state.navigation.orientation = s.state.orientation_deg;
+            updateTopStats();
+          }
+        } catch (e) {}
+      });
       updateIlluminationUI();
       updateImagingUI();
       drawSparkline();
