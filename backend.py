@@ -29,7 +29,7 @@ except Exception:  # pragma: no cover - optional runtime fallback
     cv2 = None
 
 APP_DIR = Path(__file__).resolve().parent
-FRONTEND_FILE = APP_DIR / "endoscopic_premium_tabs.html"
+FRONTEND_FILE = APP_DIR / "frontend.html"
 
 app = FastAPI(
     title="Intelligent Endoscopic Assistance System Backend",
