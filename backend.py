@@ -29,7 +29,7 @@ except Exception:  # pragma: no cover - optional runtime fallback
     cv2 = None
 
 APP_DIR = Path(__file__).resolve().parent
-FRONTEND_FILE = APP_DIR / "frontend.html"
+FRONTEND_FILE = APP_DIR / "endoscopic_premium_tabs.html"
 
 app = FastAPI(
     title="Intelligent Endoscopic Assistance System Backend",
@@ -73,79 +73,6 @@ class ReportRequest(BaseModel):
     metrics: Dict[str, Any] = Field(default_factory=dict)
 
 
-class LiveControlRequest(BaseModel):
-    """Control live-imaging parameters exposed to the frontend."""
-
-    illumination_intensity: Optional[int] = Field(default=None, ge=0, le=100)
-    illumination_on: Optional[bool] = None
-    zoom: Optional[float] = Field(default=None, ge=0.1, le=6.0)
-    contrast_strength: Optional[int] = Field(default=None, ge=0, le=100)
-    frame_rate: Optional[int] = Field(default=None, ge=1, le=60)
-    cleaning: Optional[str] = Field(default=None, description="'air' or 'water'")
-    emergency: Optional[bool] = None
-    orientation_deg: Optional[float] = Field(default=None, ge=0.0, le=360.0)
-
-
-# Lightweight in-memory live state for local control
-LIVE_STATE: Dict[str, Any] = {
-    "running": False,
-    "illumination": {"on": True, "intensity": 72},
-    "imaging": {"zoom": 1.0, "contrast_strength": 35},
-    "frame_rate": 24,
-    "orientation_deg": 0.0,
-    "last_updated": time.time(),
-}
-
-
-@app.post("/api/live/start")
-def live_start() -> Dict[str, Any]:
-    LIVE_STATE["running"] = True
-    LIVE_STATE["last_updated"] = time.time()
-    return {"status": "started", "state": LIVE_STATE}
-
-
-@app.post("/api/live/stop")
-def live_stop() -> Dict[str, Any]:
-    LIVE_STATE["running"] = False
-    LIVE_STATE["last_updated"] = time.time()
-    return {"status": "stopped", "state": LIVE_STATE}
-
-
-@app.get("/api/live/status")
-def live_status() -> Dict[str, Any]:
-    return {"state": LIVE_STATE}
-
-
-@app.post("/api/live/control")
-def live_control(payload: LiveControlRequest) -> Dict[str, Any]:
-    updated = {}
-    if payload.illumination_intensity is not None:
-        LIVE_STATE.setdefault("illumination", {})["intensity"] = int(payload.illumination_intensity)
-        updated["illumination_intensity"] = LIVE_STATE["illumination"]["intensity"]
-    if payload.illumination_on is not None:
-        LIVE_STATE.setdefault("illumination", {})["on"] = bool(payload.illumination_on)
-        updated["illumination_on"] = LIVE_STATE["illumination"]["on"]
-    if payload.zoom is not None:
-        LIVE_STATE.setdefault("imaging", {})["zoom"] = float(payload.zoom)
-        updated["zoom"] = LIVE_STATE["imaging"]["zoom"]
-    if payload.contrast_strength is not None:
-        LIVE_STATE.setdefault("imaging", {})["contrast_strength"] = int(payload.contrast_strength)
-        updated["contrast_strength"] = LIVE_STATE["imaging"]["contrast_strength"]
-    if payload.frame_rate is not None:
-        LIVE_STATE["frame_rate"] = int(payload.frame_rate)
-        updated["frame_rate"] = LIVE_STATE["frame_rate"]
-    if payload.cleaning in {"air", "water"}:
-        # Report requested cleaning action; frontend handles animation
-        updated["cleaning"] = payload.cleaning
-    if payload.emergency is not None:
-        LIVE_STATE["running"] = not bool(payload.emergency)  # emergency True -> stop
-        updated["emergency"] = bool(payload.emergency)
-    if payload.orientation_deg is not None:
-        LIVE_STATE["orientation_deg"] = float(payload.orientation_deg) % 360.0
-        updated["orientation_deg"] = LIVE_STATE["orientation_deg"]
-
-    LIVE_STATE["last_updated"] = time.time()
-    return {"status": "ok", "updated": updated, "state": LIVE_STATE}
 def _clean_base64(data: str) -> str:
     if "," in data and data.strip().lower().startswith("data:"):
         return data.split(",", 1)[1]
