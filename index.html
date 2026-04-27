@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Modular EndoAssist | Image Mowing</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="premium-tabbed">
+  <canvas id="particles"></canvas>
+  <div class="shell">
+    <!-- Top Stats Bar -->
+    <div class="glass topbar">
+        <div class="title-wrap"><div class="logo-dot"></div><h1>EndoAssist AI</h1></div>
+        <div class="stats-strip">
+            <div class="stat-chip"><div class="label">Depth</div><div id="statDepth" class="value">18.0 cm</div></div>
+            <div class="stat-chip"><div class="label">Mode</div><div id="statMode" class="value">Synth</div></div>
+            <div class="stat-chip"><div class="label">Timer</div><div id="statTimer" class="value">00:00:00</div></div>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <nav class="glass premium-tabs">
+      <button class="tab-btn active" data-tab-target="live">01 Live Feed</button>
+      <button class="tab-btn" data-tab-target="processing">02 Filters</button>
+    </nav>
+
+    <div class="layout">
+      <!-- LIVE TAB -->
+      <div class="main-stage active" data-tab-panel="live">
+        <div class="glass viewport-panel">
+          <div class="viewport-stage">
+            <div class="viewport-shell">
+                <div class="viewport-wrap"><canvas id="viewportCanvas" width="220" height="220"></canvas></div>
+            </div>
+          </div>
+          <div class="panel">
+             <h2>Imaging Console</h2>
+             <div class="field" style="margin-top:15px;">
+                <label>External Photo Source</label>
+                <div class="button-row">
+                  <input type="file" id="imageUploader" accept="image/*" style="display:none" />
+                  <button class="btn small" onclick="document.getElementById('imageUploader').click()">Load Real Image</button>
+                  <button class="btn btn-ghost small" id="toggleModeBtn">Mode: Synth</button>
+                </div>
+             </div>
+             <div class="segmented" id="zoomGroup">
+                <div class="seg active" data-zoom="1">1x Zoom</div>
+                <div class="seg" data-zoom="2">2x</div>
+             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PROCESSING TAB -->
+      <div class="main-stage" data-tab-panel="processing">
+        <div class="glass panel">
+          <h2>Filter Pipeline</h2>
+          <div class="field"><label>Contrast</label><input type="range" id="contrastStrength" value="35"></div>
+          <canvas id="previewProcessed" width="400" height="200" style="width:100%"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="state.js"></script>
+  <script src="engine.js"></script>
+  <script src="controls.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
